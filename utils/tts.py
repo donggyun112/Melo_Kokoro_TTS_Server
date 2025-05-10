@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Tuple, List
 import numpy as np
-from loguru import logger
 from utils.audio_converter import AudioConverter
 import time
 
@@ -90,7 +89,6 @@ class MeloTTSAdapter(TTSModelAdapter):
             from melo.api import TTS
             
             # 기본 모델(KR) 로드
-            logger.info(f"[MeloTTSAdapter] Loading KR model on {self.device}")
             tts = TTS(language="KR", device=self.device)
             self.models["KR"] = tts
             self._model_sr = tts.hps.data.sampling_rate
@@ -98,24 +96,17 @@ class MeloTTSAdapter(TTSModelAdapter):
             # 화자 목록 설정
             for name, idx in tts.hps.data.spk2id.items():
                 self.voices[name] = idx
-                
-            logger.info(f"[MeloTTSAdapter] Initialized with sample_rate={self._model_sr}Hz")
-            logger.info(f"[MeloTTSAdapter] Available voices: {list(self.voices.keys())}")
             
             return True
             
         except ImportError:
-            logger.error("[MeloTTSAdapter] Failed to import MeloTTS library")
             return False
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Initialization error: {e}")
+        except Exception:
             return False
     
     def warmup(self) -> bool:
         """모델 워밍업"""
         try:
-            logger.info("[MeloTTSAdapter] Starting model warmup...")
-            
             from melo.utils import get_text_for_tts_infer
             import torch
             
@@ -135,9 +126,6 @@ class MeloTTSAdapter(TTSModelAdapter):
                 
                 # 대표 화자 선택 (첫 번째 화자)
                 speaker = next(iter(tts.hps.data.spk2id.items()))[1]
-                
-                # 워밍업 실행
-                logger.info(f"[MeloTTSAdapter] {lang} 모델 워밍업: '{warmup_text[:30]}...'")
                 
                 # 텍스트 처리
                 bert, ja_bert, phones, tones, lang_ids = get_text_for_tts_infer(
@@ -159,20 +147,15 @@ class MeloTTSAdapter(TTSModelAdapter):
                         sdp_ratio=0.2, noise_scale=0.6,
                         noise_scale_w=0.8, length_scale=1.0
                     )
-                    elapsed = time.time() - start_time
                 
                 # 리소스 해제
                 del bert, ja_bert, phones, tones, lang_ids, speakers
                 if self.device == "cuda":
                     torch.cuda.empty_cache()
-                
-                logger.info(f"[MeloTTSAdapter] {lang} 모델 워밍업 완료: {elapsed:.2f}초 소요")
             
-            logger.info("[MeloTTSAdapter] 모든 모델 워밍업 완료")
             return True
             
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Warmup error: {e}")
+        except Exception:
             return False
     
     def load_model(self, lang: str) -> bool:
@@ -189,12 +172,10 @@ class MeloTTSAdapter(TTSModelAdapter):
             # 화자 목록 업데이트
             for name, idx in tts.hps.data.spk2id.items():
                 self.voices[name] = idx
-                
-            logger.info(f"[MeloTTSAdapter] {lang} model loaded with voices: {list(self.voices.keys())}")
+            
             return True
             
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Failed loading model {lang}: {e}")
+        except Exception:
             return False
     
     def list_voices(self) -> List[str]:
@@ -214,7 +195,6 @@ class MeloTTSAdapter(TTSModelAdapter):
             # 문장 분리
             sentences = self.split_sentences(text, voice)
             if not sentences:
-                logger.warning("[MeloTTSAdapter] No sentences to process")
                 # 빈 배열 대신 무음 생성
                 silent_audio = np.zeros(int(0.5 * target_sr), dtype=np.float32)  # 0.5초 무음
                 return silent_audio, target_sr
@@ -223,8 +203,6 @@ class MeloTTSAdapter(TTSModelAdapter):
             full_audio = np.array([], dtype=np.float32)
             
             for s_idx, sent in enumerate(sentences, 1):
-                logger.debug(f"[MeloTTSAdapter] Processing sentence #{s_idx}/{len(sentences)}: {sent[:30]}...")
-                
                 # 단일 문장에 대한 오디오 생성
                 audio = self.generate_audio_by_sentence(
                     sentence=sent,
@@ -236,7 +214,6 @@ class MeloTTSAdapter(TTSModelAdapter):
                 
                 # 생성된 오디오가 없으면 건너뜀
                 if audio.size == 0:
-                    logger.warning(f"[MeloTTSAdapter] No audio generated for sentence #{s_idx}")
                     continue
                 
                 # 오디오 결합
@@ -244,14 +221,12 @@ class MeloTTSAdapter(TTSModelAdapter):
             
             # 최종 결과가 빈 배열이면 무음 반환
             if full_audio.size == 0:
-                logger.warning("[MeloTTSAdapter] No audio generated for any sentence")
                 silent_audio = np.zeros(int(0.5 * target_sr), dtype=np.float32)  # 0.5초 무음
                 return silent_audio, target_sr
                 
             return full_audio, target_sr
             
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Error in audio generation: {e}")
+        except Exception:
             # 오류 발생 시 무음 반환
             silent_audio = np.zeros(int(0.5 * target_sr), dtype=np.float32)  # 0.5초 무음
             return silent_audio, target_sr
@@ -271,13 +246,11 @@ class MeloTTSAdapter(TTSModelAdapter):
             
             # 문장 유효성 검사
             if not sentence or len(sentence.strip()) == 0:
-                logger.warning("[MeloTTSAdapter] Empty sentence provided")
                 # 빈 문장은 짧은 무음으로 대체
                 return np.zeros(int(0.1 * target_sr), dtype=np.float32)  # 0.1초 무음
             
             # 화자 유효성 검사
             if voice not in self.voices:
-                logger.warning(f"[MeloTTSAdapter] Unknown voice '{voice}', using 'KR'")
                 voice = "KR"
             
             # 언어 코드 추출 및 모델 로드
@@ -320,7 +293,6 @@ class MeloTTSAdapter(TTSModelAdapter):
             
             # 오디오 유효성 검사
             if audio.size == 0:
-                logger.warning("[MeloTTSAdapter] Empty audio generated")
                 return np.zeros(int(0.1 * target_sr), dtype=np.float32)  # 0.1초 무음
             
             # 리샘플링 (필요한 경우)
@@ -329,8 +301,7 @@ class MeloTTSAdapter(TTSModelAdapter):
             
             return audio
             
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Error in single sentence audio generation: {e}")
+        except Exception:
             # 오류 시 무음 반환
             return np.zeros(int(0.1 * target_sr), dtype=np.float32)  # 0.1초 무음
     
@@ -343,8 +314,7 @@ class MeloTTSAdapter(TTSModelAdapter):
             from scipy.signal import resample_poly
             g = np.gcd(orig_sr, tgt_sr)
             return resample_poly(audio, tgt_sr // g, orig_sr // g, padtype="line")
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Resampling error: {e}")
+        except Exception:
             # 리샘플링 오류 시 원본 반환
             return audio
     
@@ -353,7 +323,6 @@ class MeloTTSAdapter(TTSModelAdapter):
         try:
             # 텍스트 유효성 검사
             if not text or len(text.strip()) == 0:
-                logger.warning("[MeloTTSAdapter] Empty text provided for sentence splitting")
                 return []
                 
             # 언어 코드 추출
@@ -362,7 +331,6 @@ class MeloTTSAdapter(TTSModelAdapter):
             # 모델 로드
             if lang_code not in self.models:
                 if not self.load_model(lang_code):
-                    logger.warning(f"[MeloTTSAdapter] Failed to load {lang_code} model for sentence splitting")
                     # 모델 로드 실패 시 기본 분리 규칙 사용
                     return self._fallback_split_sentences(text)
             
@@ -375,13 +343,11 @@ class MeloTTSAdapter(TTSModelAdapter):
             
             # 결과 유효성 검사
             if not sentences:
-                logger.warning("[MeloTTSAdapter] No sentences found after MeloTTS splitting")
                 return self._fallback_split_sentences(text)
                 
             return sentences
             
-        except Exception as e:
-            logger.exception(f"[MeloTTSAdapter] Error splitting sentences: {e}")
+        except Exception:
             # 오류 발생 시 기본 분리 규칙 사용
             return self._fallback_split_sentences(text)
     
@@ -435,28 +401,20 @@ class KokoroTTSAdapter(TTSModelAdapter):
             from kokoro_onnx import Kokoro
             from misaki.espeak import EspeakG2P
             
-            logger.info(f"[KokoroTTSAdapter] Loading model from {self.model_path}")
             self.kokoro = Kokoro(self.model_path, self.voice_path)
             self.g2p = EspeakG2P(language="ko")
-            
-            logger.info(f"[KokoroTTSAdapter] Initialized with sample_rate={self._model_sr}Hz")
-            logger.info(f"[KokoroTTSAdapter] Available voices: {self._voices}")
             
             return True
             
         except ImportError:
-            logger.error("[KokoroTTSAdapter] Failed to import Kokoro or Misaki library")
             return False
-        except Exception as e:
-            logger.exception(f"[KokoroTTSAdapter] Initialization error: {e}")
+        except Exception:
             return False
             
     
     def warmup(self) -> bool:
         """모델 워밍업"""
         try:
-            logger.info("[KokoroTTSAdapter] Starting model warmup...")
-            
             # 워밍업 텍스트
             warmup_text = "안녕하세요. 이것은 모델 워밍업을 위한 텍스트입니다."
             
@@ -464,7 +422,6 @@ class KokoroTTSAdapter(TTSModelAdapter):
             phonemes, _ = self.g2p(warmup_text)
             
             # 워밍업 실행
-            start_time = time.time()
             samples, sample_rate = self.kokoro.create(
                 text=phonemes,
                 voice="af_sarah",  # 기본 화자
@@ -472,17 +429,13 @@ class KokoroTTSAdapter(TTSModelAdapter):
                 lang="ko",
                 is_phonemes=True
             )
-            elapsed = time.time() - start_time
             
             # 샘플레이트 확인
             self._model_sr = sample_rate
             
-            logger.info(f"[KokoroTTSAdapter] 워밍업 완료: {elapsed:.2f}초 소요, "
-                       f"샘플레이트={sample_rate}Hz, 샘플 수={len(samples)}")
             return True
             
-        except Exception as e:
-            logger.exception(f"[KokoroTTSAdapter] Warmup error: {e}")
+        except Exception:
             return False
     
     def list_voices(self) -> List[str]:
@@ -515,8 +468,7 @@ class KokoroTTSAdapter(TTSModelAdapter):
             
             return combined_audio, target_sr
             
-        except Exception as e:
-            logger.exception(f"[KokoroTTSAdapter] Error generating audio: {e}")
+        except Exception:
             # 오류 발생 시 빈 오디오 반환
             return np.array([], dtype=np.float32), target_sr
     
@@ -533,11 +485,9 @@ class KokoroTTSAdapter(TTSModelAdapter):
             raise RuntimeError("Model not initialized. Call initialize() first.")
             
         if not sentence or len(sentence.strip()) == 0:
-            logger.warning("[KokoroTTSAdapter] Empty sentence provided")
             return np.array([], dtype=np.float32)
             
         if voice not in self._voices:
-            logger.warning(f"[KokoroTTSAdapter] Unknown voice '{voice}', using 'af_sarah'")
             voice = "af_sarah"  # 기본 화자
         
         try:
@@ -545,7 +495,6 @@ class KokoroTTSAdapter(TTSModelAdapter):
             phonemes, _ = self.g2p(sentence)
             
             # 오디오 생성
-            logger.info(f"[KokoroTTSAdapter] Generating for: {sentence[:30]}...")
             samples, sample_rate = self.kokoro.create(
                 text=phonemes,
                 voice=voice,
@@ -564,8 +513,7 @@ class KokoroTTSAdapter(TTSModelAdapter):
             
             return samples
             
-        except Exception as e:
-            logger.exception(f"[KokoroTTSAdapter] Audio generation error: {e}")
+        except Exception:
             raise
     
     def split_sentences(self, text: str, lang: str) -> List[str]:
@@ -576,7 +524,6 @@ class KokoroTTSAdapter(TTSModelAdapter):
         try:
             import re
             
-            # 문장 분리 패턴 (한국어에 맞게 수정)
             # 마침표, 물음표, 느낌표 뒤에 공백이나 줄바꿈이 있으면 분리
             pattern = r'(?<=[.!?])\s+'
             
@@ -592,8 +539,7 @@ class KokoroTTSAdapter(TTSModelAdapter):
                 
             return result
             
-        except Exception as e:
-            logger.exception(f"[KokoroTTSAdapter] Error splitting sentences: {e}")
+        except Exception:
             # 에러 발생 시 원본 텍스트를 단일 문장으로 반환
             return [text]
     
